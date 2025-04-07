@@ -1291,6 +1291,49 @@ class DeclareModel(LTLModel):
         self.declare_model_lines = lines
         self.parse(lines)
         return self
+    
+    def parse_from_diagram(self, diagram_lines: [str]) -> DeclareModel:
+        """
+        Parses a xml file generated from a bpmn diagram. 
+        args:
+            diagram_lines: A list of declare constraints generated from a bpmn diagram
+
+        Returns:
+            DeclareModel
+        """
+        all_activities = set()
+        constraints = {}
+
+        # Identify constraints and apply templates
+        for line in diagram_lines:
+            template_split = line.split("[", 1)
+            template_search = re.search(r'(^.+?)(\d*$)', template_split[0])
+            parts = line.strip('[]').split('[')
+            _, actions = parts
+            activities = []
+            for action in actions.split(', '):
+                activities.append(action)  # Extract the activities for the current constraint
+                all_activities.add(action) # Extract the activity for the entire model
+                constraints[action] = set()
+
+            if template_search is not None:
+                parts = line.strip('[]').split('[')
+
+                template_str, cardinality = template_search.groups()
+                template = DeclareModelTemplate.get_template_from_string(template_str)
+                if template is not None:
+                    # bpmn2constraints don't use conditions
+                    tmp = {"template": template, "activities": activities,
+                               "condition": ["",""]}#re.split(r'\s+\|', line)[1:]}
+                    if template.supports_cardinality:
+                        tmp['n'] = 1 if not cardinality else int(cardinality)
+                        cardinality = tmp['n']
+                    self.constraints.append(tmp)
+                    self.parsed_model.add_template(line, template, str(cardinality))
+        self.activities = list(all_activities)
+        self.set_constraints()
+
+        return self
 
     def parse(self, lines: [str]):
         declare_parsed_model = self.parsed_model

@@ -153,7 +153,30 @@ class LTLModel(ProcessModel, ABC):
             return True
         else:
             return False
+        
+    def parse_from_diagram(self, line: str, activites):
+        """
+        Parses a xml file generated from a bpmn diagram. 
+        args:
+            line - A string containing the LTLf formula to parse
+            activities - A list of activities generated from the DeclareModel
 
+        Returns:
+            Void
+        """
+        for word in activites:
+            """ TODO: While this works currently, som modifications should be made to either parse_from_string or 
+                the analyzer to make it applicable to all event logs """
+            prefixed_word = 'con_' + word.replace(' ', '').lower()
+            line = line.replace(word.replace(' ', '_'), prefixed_word)
+            if line == word:
+                line = word.replace(' ', '').lower()
+                line = 'con_' + line
+
+        self.parse_from_string(line)
+        self.attribute_type = ["concept:name"]
+
+        
     def parse_from_string(self, content: str, new_line_ctrl: str = "\n") -> None:
         """
         This function expects an LTL formula as a string.

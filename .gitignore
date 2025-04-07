@@ -138,3 +138,5 @@ dmypy.json
 *.lp
 *.asp
 
+# vsc files
+.vscode
