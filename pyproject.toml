@@ -19,23 +19,14 @@ authors = [
     { name = "Fabrizio Maria Maggi", email = "maggi@inf.unibz.it" }
 ]
 dependencies = [
-    "pandas~=1.5.3",
-    "numpy~=1.24.2",
-    "scikit-learn~=1.2.2",
-    "pm4py~=2.6.1",
-    "logaut~=0.2.0",
-    "pylogics~=0.2.0",
-    "packaging~=23.0",
-    "pyparsing<3",
-    "mlxtend~=0.21.0 ",
-    "pythomata~=0.3.2" ,
-    "mlxtend~=0.21.0",
-    "numba~=0.57.0",
-    "matplotlib~=3.6.3",
-    "clingo==5.6.2",
-    "boolean.py==4.0",
-    "ltlf2dfa==1.0.2",
-    "groq",
-    "python-dotenv"
+    "logaut",
+    "packaging",
+    "mlxtend >= 0.20.0",
+    "pm4py >= 2.5.1",
+    "clingo >= 5.6.2",
+    "boolean.py",
+    "pandas >= 1.3.4",
+    "ltlf2dfa ==1.0.2",
+    "tqdm"
 ]
 dynamic = ["version"]

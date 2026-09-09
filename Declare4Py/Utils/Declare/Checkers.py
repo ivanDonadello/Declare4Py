@@ -3,6 +3,7 @@ from __future__ import annotations
 import pdb
 from abc import ABC
 from datetime import timedelta
+from functools import lru_cache
 from math import ceil
 from typing import List, Optional
 
@@ -11,6 +12,19 @@ from Declare4Py.ProcessModels.DeclareModel import DeclareModel
 from Declare4Py.ProcessModels.DeclareModel import DeclareModelConditionParserUtility, DeclareModelTemplate
 from Declare4Py.Utils.Declare.TraceStates import TraceState
 glob = {'__builtins__': None}
+
+
+@lru_cache(maxsize=4096)
+def _compile_cond(condition: str):
+    """
+    Compile a parsed activation/correlation/time condition into a code object.
+
+    The checkers evaluate the same condition once per event of every trace. Passing the source string to eval() makes
+    CPython re-parse and re-compile it on each call, which dominates the runtime of the discovery task. Code objects
+    are accepted by eval() as-is, so caching them here keeps the semantics identical while paying the compilation
+    cost only once per distinct condition.
+    """
+    return compile(condition, '<declare-condition>', 'eval')
 
 
 class ConstraintChecker:
@@ -123,8 +137,8 @@ class TemplateConstraintChecker(ABC):
             print(f"The checker function for template {template.templ_str} has not been implemented yet.")
 
     def mpChoice(self) -> CheckerResult:
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
         a_or_b_occurs = False
         for A in self.traces:
             if A[self.concept_name] == self.activities[0] or A[self.concept_name] == self.activities[1]:
@@ -144,18 +158,20 @@ class TemplateConstraintChecker(ABC):
                              state=state)
 
     def mpExclusiveChoice(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
         a_occurs = False
         b_occurs = False
+        concept_name = self.concept_name
+        activity_a, activity_b = self.activities[0], self.activities[1]
+        first_event = self.traces[0] if len(self.traces) > 0 else None
         for A in self.traces:
-            locl = {'A': A, 'T': self.traces[0], 'timedelta': timedelta, 'abs': abs, 'float': float}
-            if not a_occurs and A[self.concept_name] == self.activities[0]:
+            activity = A[concept_name]
+            if (not a_occurs and activity == activity_a) or (not b_occurs and activity == activity_b):
+                locl = {'A': A, 'T': first_event, 'timedelta': timedelta, 'abs': abs, 'float': float}
                 if eval(activation_rules, glob, locl) and eval(time_rule, glob, locl):
-                    a_occurs = True
-            if not b_occurs and A[self.concept_name] == self.activities[1]:
-                if eval(activation_rules, glob, locl) and eval(time_rule, glob, locl):
-                    b_occurs = True
+                    a_occurs = a_occurs or activity == activity_a
+                    b_occurs = b_occurs or activity == activity_b
             if a_occurs and b_occurs:
                 break
         state = None
@@ -177,8 +193,8 @@ class TemplateConstraintChecker(ABC):
         event a must occur at least n-times in the trace.
     """
     def mpExistence(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
         num_activations = 0
         for A in self.traces:
             if A[self.concept_name] == self.activities[0]:
@@ -202,8 +218,8 @@ class TemplateConstraintChecker(ABC):
         event a may occur at most n − times in the trace.
     """
     def mpAbsence(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         num_activations = 0
         for A in self.traces:
@@ -230,7 +246,7 @@ class TemplateConstraintChecker(ABC):
         that event e is the first event that occurs in the trace.
     """
     def mpInit(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
 
         state = TraceState.VIOLATED
         if self.traces[0][self.concept_name] == self.activities[0]:
@@ -247,7 +263,7 @@ class TemplateConstraintChecker(ABC):
         that event e is the first event that occurs in the trace.
     """
     def mpEnd(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
 
         state = TraceState.VIOLATED
         if self.traces[-1][self.concept_name] == self.activities[0]:
@@ -262,8 +278,8 @@ class TemplateConstraintChecker(ABC):
         mp-exactly constraint checker
     """
     def mpExactly(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
         num_activations = 0
         for A in self.traces:
             if A[self.concept_name] == self.activities[0]:
@@ -291,9 +307,9 @@ class TemplateConstraintChecker(ABC):
     # then event b occurs in the trace as well.
     # Event a activates the constraint.
     def mpRespondedExistence(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         pendings = []
         num_fulfillments = 0
@@ -311,11 +327,16 @@ class TemplateConstraintChecker(ABC):
                 break
 
             if event[self.concept_name] == self.activities[1]:
-                for A in reversed(pendings):
+                # Rebuilding the list is O(len(pendings)): removing by value would instead scan the list and compare
+                # whole events, and pm4py's Event.__eq__ stringifies every attribute on each comparison.
+                still_pending = []
+                for A in pendings:
                     locl = {'A': A, 'T': event, 'timedelta': timedelta, 'abs': abs, 'float': float}
                     if eval(correlation_rules, glob, locl) and eval(time_rule, glob, locl):
-                        pendings.remove(A)
                         num_fulfillments += 1
+                    else:
+                        still_pending.append(A)
+                pendings = still_pending
 
         if self.completed:
             num_violations = len(pendings)
@@ -344,9 +365,9 @@ class TemplateConstraintChecker(ABC):
                              num_pendings=num_pendings, num_activations=num_activations, state=state)
 
     def mpResponse(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         pendings = []
         num_fulfillments = 0
@@ -360,11 +381,15 @@ class TemplateConstraintChecker(ABC):
                     pendings.append(event)
 
             if pendings and event[self.concept_name] == self.activities[1]:
-                for A in reversed(pendings):
+                # See mpRespondedExistence: rebuilding keeps this linear in the number of pending activations.
+                still_pending = []
+                for A in pendings:
                     locl = {'A': A, 'T': event, 'timedelta': timedelta, 'abs': abs, 'float': float}
                     if eval(correlation_rules, glob, locl) and eval(time_rule, glob, locl):
-                        pendings.remove(A)
                         num_fulfillments += 1
+                    else:
+                        still_pending.append(A)
+                pendings = still_pending
 
         if self.completed:
             num_violations = len(pendings)
@@ -399,9 +424,9 @@ class TemplateConstraintChecker(ABC):
     # before event a recurs.
     # Event a activates the constraint.
     def mpAlternateResponse(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         pending = None
         num_activations = 0
@@ -452,9 +477,9 @@ class TemplateConstraintChecker(ABC):
         Returns:
 
         """
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         num_activations = 0
         num_fulfillments = 0
@@ -506,9 +531,9 @@ class TemplateConstraintChecker(ABC):
         Returns:
 
         """
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         num_activations = 0
         num_fulfillments = 0
@@ -556,9 +581,9 @@ class TemplateConstraintChecker(ABC):
         Returns:
 
         """
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         num_activations = 0
         num_fulfillments = 0
@@ -602,9 +627,9 @@ class TemplateConstraintChecker(ABC):
         Returns:
 
         """
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         num_activations = 0
         num_fulfillments = 0
@@ -642,9 +667,9 @@ class TemplateConstraintChecker(ABC):
                              num_activations=num_activations, state=state)
 
     def mpNotRespondedExistence(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         pendings = []
         num_fulfillments = 0
@@ -662,11 +687,15 @@ class TemplateConstraintChecker(ABC):
                 break
 
             if event[self.concept_name] == self.activities[1]:
-                for A in reversed(pendings):
+                # See mpRespondedExistence: rebuilding keeps this linear in the number of pending activations.
+                still_pending = []
+                for A in pendings:
                     locl = {'A': A, 'T': event, 'timedelta': timedelta, 'abs': abs, 'float': float}
                     if eval(correlation_rules, glob, locl) and eval(time_rule, glob, locl):
-                        pendings.remove(A)
                         num_violations += 1
+                    else:
+                        still_pending.append(A)
+                pendings = still_pending
 
         if self.completed:
             num_fulfillments = len(pendings)
@@ -693,9 +722,9 @@ class TemplateConstraintChecker(ABC):
                              num_pendings=num_pendings, num_activations=num_activations, state=state)
 
     def mpNotResponse(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         pendings = []
         num_fulfillments = 0
@@ -709,11 +738,15 @@ class TemplateConstraintChecker(ABC):
                     pendings.append(event)
 
             if pendings and event[self.concept_name] == self.activities[1]:
-                for A in reversed(pendings):
+                # See mpRespondedExistence: rebuilding keeps this linear in the number of pending activations.
+                still_pending = []
+                for A in pendings:
                     locl = {'A': A, 'T': event, 'timedelta': timedelta, 'abs': abs, 'float': float}
                     if eval(correlation_rules, glob, locl) and eval(time_rule, glob, locl):
-                        pendings.remove(A)
                         num_violations += 1
+                    else:
+                        still_pending.append(A)
+                pendings = still_pending
 
         if self.completed:
             num_fulfillments = len(pendings)
@@ -740,9 +773,9 @@ class TemplateConstraintChecker(ABC):
                              num_pendings=num_pendings, num_activations=num_activations, state=state)
 
     def mpNotPrecedence(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
 
         num_activations = 0
         num_violations = 0
@@ -784,9 +817,9 @@ class TemplateConstraintChecker(ABC):
                              num_activations=num_activations, state=state)
 
     def mpNotChainPrecedence(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
         num_activations = 0
         num_violations = 0
 
@@ -824,9 +857,9 @@ class TemplateConstraintChecker(ABC):
                              num_activations=num_activations, state=state)
 
     def mpNotChainResponse(self):
-        activation_rules = self.declare_parser_utility.parse_data_cond(self.rules["activation"])
-        correlation_rules = self.declare_parser_utility.parse_data_cond(self.rules["correlation"])
-        time_rule = self.declare_parser_utility.parse_time_cond(self.rules["time"])
+        activation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["activation"]))
+        correlation_rules = _compile_cond(self.declare_parser_utility.parse_data_cond(self.rules["correlation"]))
+        time_rule = _compile_cond(self.declare_parser_utility.parse_time_cond(self.rules["time"]))
         num_activations = 0
         num_violations = 0
         num_pendings = 0
